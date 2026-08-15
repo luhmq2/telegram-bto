@@ -10,7 +10,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8666468661:AAHzXsyHorv0LDQQ7S11mLEiAcCeM2XJUbI"
 LTC_WALLET = "ltc1qx3ff59204wy3pt0qygzyh3c7nw3v0d0vwcqzes"
 OWNER_ID = 8936045536
-OWNER_USERNAME = "https://t.me/enrollfo"
+OWNER_USERNAME = "enrollfo"
 INVENTORY = {
 "gfx_pack": {"name": "💳 fulls", "price_usd": 5.00, "stock": 0, "items": []},
 "discord_vip": {"name": "🍔 food logs", "price_usd": 10.00, "stock": 0, "items": []}
