@@ -140,17 +140,17 @@ current_market_rate = get_ltc_price()
 base_ltc_needed = product["price_usd"] / current_market_rate
 unique_modifier = (query.from_user.id % 1000) / 100000
 exact_ltc_charge = round(base_ltc_needed + unique_modifier, 5)
-checkout_btn = InlineKeyboardButton("🟢 Confirm Payment", callback_data=f"verify
-
-
-{prod_id}_{exact_ltc_charge}")
+checkout_btn = InlineKeyboardButton("🟢 Confirm Payment", callback_data=f"verify{prod_id}_{exact_ltc_charge}")
 checkout_screen = (
 f"⚙️ REAL LITECOIN INVOICE GENERATED\n\n"
 f"📦 Product: {product['name']}\n"
 f"📊 Current Stock: {product['stock']} available\n"
 f"💰 Amount Due: {exact_ltc_charge} LTC\n"
 f"🏦 Send To Address: (Tap address text box below to copy)\n{LTC_WALLET}\n\n"
-f"💡 Instructions: Transfer the exact amount shown above using any mobile or desktop hardware crypto wallet. Once sent, click the green verification button below to claim your digital goods instantly."
+f"💡 Instructions: Transfer the exact amount shown above using any mobile or desktop hardware crypto wallet. Once sent, click the green verification button below to claim your digital goods instantly.
+
+
+"
 )
 await query.edit_message_text(text=checkout_screen, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[checkout_btn]]))
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,7 +161,7 @@ return
 if len(context.args) < 1:
 await update.message.reply_text("⚠️ Usage: /add_stock [gfx_pack OR discord_vip] [paste item lines]", parse_mode="Markdown")
 return
-product_key = context.args
+product_key = context.args[0]
 if product_key not in INVENTORY:
 await update.message.reply_text("❌ Error: Invalid key pattern specified. Use gfx_pack or discord_vip.")
 return
