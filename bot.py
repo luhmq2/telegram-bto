@@ -1,6 +1,8 @@
-import logging, asyncio, requests, uvicorn
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
+import logging
+import asyncio
+import requests
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -16,7 +18,16 @@ INVENTORY = {
     "discord_vip": {"name": "🍔 food logs", "price_usd": 10.00, "stock": 0, "items": []}
 }
 
-tg_app = Application.builder().token(TOKEN).build()
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_server():
+    server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
+    server.serve_forever()
 
 def get_ltc_price():
     try:
@@ -50,7 +61,7 @@ async def handle_shop_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         if prod["stock"] <= 0:
             await q.edit_message_text("❌ Out of stock!")
             return
-        await q.edit_message_text("🔄 *VERIFYING TRANSACTION METRICS...*")
+        await q.edit_message_text("🔄 *VERIFYING TRANSACTION...*")
         await asyncio.sleep(2)
         if check_live_blockchain(LTC_WALLET, amt):
             item = prod["items"].pop(0)
@@ -71,7 +82,7 @@ async def handle_shop_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    if len(context.args) < 1: return
+    if not context.args or len(context.args) < 1: return
     pk = context.args[0]
     if pk not in INVENTORY: return
     txt = update.message.text
@@ -80,18 +91,14 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     INVENTORY[pk]["stock"] = len(INVENTORY[pk]["items"])
     await update.message.reply_text(f"✅ Added {len(items)} items. Total: {INVENTORY[pk]['stock']}")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    tg_app.add_handler(CommandHandler("start", start))
-    tg_app.add_handler(CallbackQueryHandler(handle_shop_buttons))
-    tg_app.add_handler(CommandHandler("add_stock", add_stock))
-    await tg_app.initialize()
-    await tg_app.start()
-    asyncio.create_task(tg_app.updater.start_polling(close_loop=False))
-    yield
-    await tg_app.updater.stop()
-    await tg_app.stop()
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_shop_buttons))
+    app.add_handler(CommandHandler("add_stock", add_stock))
+    print("Production Mainnet shop bot running...")
+    app.run_polling()
 
-app = FastAPI(lifespan=lifespan)
-@app.get("/")
-async def home(): return {"status": "online"}
+if __name__ == '__main__':
+    main()
