@@ -1,12 +1,13 @@
 import logging
 import asyncio
 import requests
-from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# Logging setup to track production payments from your console logs
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# ⚠️ OPERATIONAL CONFIGURATION
 TOKEN = "8666468661:AAHzXsyHorv0LDQQ7S11mLEiAcCeM2XJUbI"
 LTC_WALLET = "ltc1qx3ff59204wy3pt0qygzyh3c7nw3v0d0vwcqzes"
 OWNER_ID = 8936045536
@@ -16,10 +17,6 @@ INVENTORY = {
     "gfx_pack": {"name": "💳 fulls", "price_usd": 5.00, "stock": 0, "items": []},
     "discord_vip": {"name": "🍔 food logs", "price_usd": 10.00, "stock": 0, "items": []}
 }
-
-# Explicitly disable local polling flags to enforce strict Web-Hook integration
-tg_app = Application.builder().token(TOKEN).updater(None).build()
-fastapi_app = FastAPI()
 
 def get_ltc_price():
     try:
@@ -164,35 +161,13 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     INVENTORY[product_key]["stock"] = len(INVENTORY[product_key]["items"])
     await update.message.reply_text(f"✅ Added {len(clean_lines)} items. Total: {INVENTORY[product_key]['stock']}")
 
-# --- 🌐 WEBHOOK ENDPOINT FOR TELEGRAM ENTRY ROUTING ---
-@fastapi_app.post(f"/webhook-{TOKEN}")
-async def telegram_webhook(request: Request):
-    """Intercepts live JSON entries from Telegram and forces single-thread parsing."""
-    try:
-        json_data = await request.json()
-        update = Update.de_json(json_data, tg_app.bot)
-        await tg_app.initialize()
-        await tg_app.process_update(update)
-    except Exception as e:
-        logging.error(f"Webhook tracking execution failure: {e}")
-    return {"status": "processed"}
+def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_shop_buttons))
+    app.add_handler(CommandHandler("add_stock", add_stock))
+    print("Production Mainnet shop bot running...")
+    app.run_polling()
 
-@fastapi_app.get("/")
-async def home_route():
-    return {"status": "Web Hook Router Online"}
-
-# Automated hook configuration trigger run at launch parameters
-async def setup_webhook_on_boot():
-    await asyncio.sleep(5)
-    try:
-        # Pulls down your public web URL parameters dynamically from Render's config mappings
-        import os
-        render_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
-        webhook_target = f"{render_url}/webhook-{TOKEN}"
-        await tg_app.bot.set_webhook(url=webhook_target)
-        logging.info(f"Successfully locked single-instance Web-Hook route: {webhook_target}")
-    except Exception as e:
-        logging.error(f"Webhook structural setup failure: {e}")
-
-# Launch hook setup task outside main blocker threads
-asyncio.ensure_future(setup_webhook_on_boot())
+if __name__ == '__main__':
+    main()
