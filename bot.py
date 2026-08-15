@@ -1,8 +1,7 @@
 import logging
 import asyncio
 import requests
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -18,19 +17,9 @@ INVENTORY = {
     "discord_vip": {"name": "🍔 food logs", "price_usd": 10.00, "stock": 0, "items": []}
 }
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-def run_health_server():
-    try:
-        server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
-        server.serve_forever()
-    except Exception as e:
-        logging.error(f"Web server error: {e}")
+# Explicitly disable local polling flags to enforce strict Web-Hook integration
+tg_app = Application.builder().token(TOKEN).updater(None).build()
+fastapi_app = FastAPI()
 
 def get_ltc_price():
     try:
@@ -43,20 +32,12 @@ def get_ltc_price():
     return 95.00
 
 def check_live_blockchain(wallet, target_amount):
-    """
-    Queries the official Litecoin Space mainnet endpoints.
-    Protects original character formatting rules to prevent ledger lookup faults.
-    """
-    # FIX: Maintain original character formatting rules to prevent ledger lookup faults
     clean_wallet = wallet.strip()
     target_rounded = round(float(target_amount), 4)
-    
-    # Check both the unconfirmed mempool and the confirmed transaction ledger pools
     endpoints = [
         f"https://litecoinspace.org{clean_wallet}/mempool",
         f"https://litecoinspace.org{clean_wallet}/txs"
     ]
-    
     for url in endpoints:
         try:
             response = requests.get(url, timeout=8)
@@ -67,14 +48,12 @@ def check_live_blockchain(wallet, target_amount):
                 continue
             for tx in transactions:
                 for vout in tx.get("vout", []):
-                    # Compare addresses without breaking data values
                     if str(vout.get("scriptpubkey_address")).strip() == clean_wallet:
                         amount_ltc = vout.get("value", 0) / 100000000
                         if round(amount_ltc, 4) == target_rounded:
-                            logging.info(f"Verified deposit match: {amount_ltc} LTC")
                             return True
-        except Exception as e:
-            logging.error(f"Blockchain lookup error: {e}")
+        except Exception:
+            pass
     return False
 
 async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int):
@@ -157,51 +136,63 @@ async def handle_shop_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     checkout_btn = InlineKeyboardButton("🟢 Confirm Payment", callback_data=f"verify_{pid}_{exact_ltc_charge}")
     checkout_screen = (
-        f"⚙️ *REAL LITECOIN INVOICE GENERATED*\n\n"
+        f"⚙️ *REAL LITECOIN INVOICE GENERATED*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 *Product:* {prod['name']}\n"
         f"📊 *Current Stock:* {prod['stock']} available\n"
         f"💰 *Amount Due:* `{exact_ltc_charge} LTC`\n"
-        f"🏦 *Send To Address:* (Tap address text box below to copy)\n`{LTC_WALLET}`\n\n"
+        f"🏦 *Send To Address:* (Tap address text box below to copy)\n`{LTC_WALLET}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"💡 _Instructions: Transfer the exact amount shown above using any mobile or desktop hardware crypto wallet. Once sent, click the green verification button below to claim your digital goods instantly._"
     )
     await query.edit_message_text(text=checkout_screen, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[checkout_btn]]))
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        await update.message.reply_text("❌ Permission Denied. Restocking commands are private to the bot owner.")
-        return
-    if not context.args or len(context.args) < 1:
-        await update.message.reply_text("⚠️ Usage: `/add_stock [gfx_pack OR discord_vip] [paste item lines]`", parse_mode="Markdown")
-        return
+    if user_id != OWNER_ID: return
+    if not context.args or len(context.args) < 1: return
     product_key = context.args[0]
-    if product_key not in INVENTORY:
-        await update.message.reply_text("❌ Error: Invalid key pattern specified. Use gfx_pack or discord_vip.")
-        return
+    if product_key not in INVENTORY: return
     raw_message = update.message.text
     header_to_remove = f"/add_stock {product_key}"
     pasted_content = raw_message[raw_message.find(header_to_remove) + len(header_to_remove):].strip()
-    if not pasted_content:
-        await update.message.reply_text("⚠️ Error: You didn't paste any item data inputs!")
-        return
+    if not pasted_content: return
     raw_lines = pasted_content.split('\n')
     clean_lines = [line.strip() for line in raw_lines if line.strip()]
-    added_count = len(clean_lines)
-    if added_count == 0:
-        await update.message.reply_text("⚠️ Error: No valid item configurations found inside your message input block.")
-        return
+    if len(clean_lines) == 0: return
     INVENTORY[product_key]["items"].extend(clean_lines)
     INVENTORY[product_key]["stock"] = len(INVENTORY[product_key]["items"])
-    await update.message.reply_text(f"✅ Added {added_count} items. Total: {INVENTORY[product_key]['stock']}")
+    await update.message.reply_text(f"✅ Added {len(clean_lines)} items. Total: {INVENTORY[product_key]['stock']}")
 
-def main():
-    threading.Thread(target=run_health_server, daemon=True).start()
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_shop_buttons))
-    app.add_handler(CommandHandler("add_stock", add_stock))
-    print("Production Mainnet shop bot running...")
-    app.run_polling()
+# --- 🌐 WEBHOOK ENDPOINT FOR TELEGRAM ENTRY ROUTING ---
+@fastapi_app.post(f"/webhook-{TOKEN}")
+async def telegram_webhook(request: Request):
+    """Intercepts live JSON entries from Telegram and forces single-thread parsing."""
+    try:
+        json_data = await request.json()
+        update = Update.de_json(json_data, tg_app.bot)
+        await tg_app.initialize()
+        await tg_app.process_update(update)
+    except Exception as e:
+        logging.error(f"Webhook tracking execution failure: {e}")
+    return {"status": "processed"}
 
-if __name__ == '__main__':
-    main()
+@fastapi_app.get("/")
+async def home_route():
+    return {"status": "Web Hook Router Online"}
+
+# Automated hook configuration trigger run at launch parameters
+async def setup_webhook_on_boot():
+    await asyncio.sleep(5)
+    try:
+        # Pulls down your public web URL parameters dynamically from Render's config mappings
+        import os
+        render_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
+        webhook_target = f"{render_url}/webhook-{TOKEN}"
+        await tg_app.bot.set_webhook(url=webhook_target)
+        logging.info(f"Successfully locked single-instance Web-Hook route: {webhook_target}")
+    except Exception as e:
+        logging.error(f"Webhook structural setup failure: {e}")
+
+# Launch hook setup task outside main blocker threads
+asyncio.ensure_future(setup_webhook_on_boot())
